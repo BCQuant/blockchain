@@ -17,6 +17,9 @@ class Blockchain:
         # Create the genesis block
         self.new_block(previous_hash='1', proof=100)
 
+    def remove_nodes(self):
+        self.nodes = set()
+
     def register_node(self, address):
         """
         Add a new node to the list of nodes
@@ -80,7 +83,6 @@ class Blockchain:
         # Grab and verify the chains from all the nodes in our network
         for node in neighbours:
             response = requests.get(f'http://{node}/chain')
-
             if response.status_code == 200:
                 length = response.json()['length']
                 chain = response.json()['chain']
@@ -251,6 +253,24 @@ def full_chain():
         'length': len(blockchain.chain),
     }
     return jsonify(response), 200
+
+
+@app.route('/nodes', methods=['GET'])
+def nodes():
+    response = {
+        'message': 'Nodes',
+        'total_nodes': list(blockchain.nodes),
+    }
+    return jsonify(response), 200
+
+@app.route('/nodes/remove', methods=['GET'])
+def remove_nodes():
+    blockchain.remove_nodes()
+    response = {
+        'message': 'Nodes removed',
+        'total_nodes': list(blockchain.nodes),
+    }
+    return jsonify(response), 201
 
 
 @app.route('/nodes/register', methods=['POST'])
