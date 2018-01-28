@@ -10,6 +10,7 @@ import requests
 #from flask import Flask, jsonify, request
 
 import asyncio
+import aiohttp
 from aiohttp import web
 
 node = 'http://localhost'
@@ -356,9 +357,8 @@ async def key_insert(request):
     
     if 'recipient' not in data:
         aiohttp.post(data['node'] + '/key/insert', data={'node':node, 'recipient':True})
-        await asyncio.sleep(0.2)
-        os.system("KeyByCURL.out " + data['node'] + '/key/update' + ' ' + node + '/key/update')
-    
+        #await asyncio.sleep(0.2)
+        #os.system("KeyByCURL.out " + data['node'] + '/key/update' + ' ' + node + '/key/update')
     key = await current_key
     
     add_key(key, node=data['node'])
