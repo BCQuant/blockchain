@@ -18,22 +18,41 @@ node = 'http://localhost'
 qnt_hashes = {}
 nodes = {}
 
+def prepare_node(address):
+    if not address:
+        return address
+    parsed_url = urlparse(address)
+    
+    if parsed_url.netloc:
+        return parsed_url.netloc
+    elif parsed_url.path:
+        # Accepts an URL without scheme like '192.168.0.5:5000'.
+        return parsed_url.path
+    else:
+        raise ValueError('Invalid URL')
+
 def add_key(key, node=None):
     hash = hashlib.sha256(key).hexdigest()
     qnt_hashes[hash] = key
+    
     if node is not None:
+        node = prepare_node(node)
         nodes[node] = hash
 
 def get_hash(obj, key_hash=None,node=None):
     if node is not None:
+        node = prepare_node(node)
         key_hash = nodes[node]
     block_string = json.dumps(obj, sort_keys=True).encode()
-    hash = hashlib.sha256(block_string + qnt_hashes[key_hash]).hexdigest()
+    
+    key = qnt_hashes.get(key_hash) if qnt_hashes.get(key_hash) else ''
+    hash = hashlib.sha256(block_string + key).hexdigest()
     return hash
 
 
 def check_hash(obj, key_hash=None, result='', node=None):
     if node is not None:
+        node = prepare_node(node)
         key_hash = nodes[node]
     return get_hash(obj, key_hash) == result
 
@@ -279,21 +298,23 @@ async def new_transaction(request):
 
 #@app.route('/chain', methods=['GET'])
 def full_chain(request):
-    if 'uuid' in request.rel_url.query:
-        cur_node = request.rel_url.query.get('uuid')
+    cur_node = None
+    if 'node' in request.rel_url.query:
+        cur_node = request.rel_url.query.get('node')
+        print(cur_node)
     response = {
         'chain': blockchain.chain,
         'length': len(blockchain.chain),
         'node': node,
     }
-    if cur_node:
+    if cur_node is not None:
         response['hash'] = get_hash(blockchain.chain, node=cur_node)
     
     return web.json_response(response)
 
 
 #@app.route('/nodes', methods=['GET'])
-def nodes(request):
+def get_nodes(request):
     response = {
         'message': 'Nodes',
         'total_nodes': list(blockchain.nodes),
@@ -347,51 +368,75 @@ def consensus(request):
 waiting_for_addition = False
 current_key = None
 async def key_insert(request):
+    print('inserting')
     data = await request.json()
+    global waiting_for_addition
+    
     if waiting_for_addition:
-        return web.json_response({}, status=200)
+        return web.json_response({}, status=400)
+        
     if 'node' not in data:
         return web.json_response({}, status=400)
+    
+    waiting_for_addition = True
     global current_key
     current_key = asyncio.Future()
-    
     if 'recipient' not in data:
-        aiohttp.post(data['node'] + '/key/insert', data={'node':node, 'recipient':True})
+        session = aiohttp.ClientSession()
+        asyncio.ensure_future(session.post('http://' + prepare_node(data['node']) + '/key/insert', json={'node':node, 'recipient':True}))
+        #aiohttp.post(, data=json.dumps())
         #await asyncio.sleep(0.2)
         #os.system("KeyByCURL.out " + data['node'] + '/key/update' + ' ' + node + '/key/update')
     key = await current_key
-    
+    waiting_for_addition = False
     add_key(key, node=data['node'])
     
-    return web.json_response({}, status=201)
+    return web.json_response({'success':True}, status=201)
 
 async def key_update(request):
     global current_key
+    global waiting_for_addition
+    if not waiting_for_addition:
+        return web.json_response({'success':False}, status=400)
     
-    key = await request.post()
+    key = await request.content.read()
+    print('Got key =', key)
+    
     key = key.strip()
     current_key.set_result(key)
     
-    return web.json_response({}, status=201)
+    return web.json_response({'success':True}, status=201)
     
+async def get_debug_info(request):
+    qnt_hashes
+
+    return web.json_response({'qnt_hashes':{ k:qnt_hashes[k].decode('ascii') for k in qnt_hashes.keys()}, 'nodes':nodes})
+    
+
+app.router.add_get ('/mine', mine)
+app.router.add_post('/transactions/new', new_transaction)
+app.router.add_get ('/chain', full_chain)
+app.router.add_get ('/nodes', get_nodes)
+
+app.router.add_post('/nodes/register', register_nodes)
+app.router.add_get ('/nodes/remove', remove_nodes)
+app.router.add_get ('/nodes/resolve', consensus)
+
 app.router.add_post('/key/insert', key_insert)
 app.router.add_post('/key/update', key_update)
 
-app.router.add_get ('/mine', mine)
-app.router.add_get ('/nodes/remove', remove_nodes)
-app.router.add_post('/transactions/new', new_transaction)
-app.router.add_get ('/chain', full_chain)
-app.router.add_get ('/nodes', nodes)
-app.router.add_post('/nodes/register', register_nodes)
-app.router.add_get ('/nodes/resolve', consensus)
+app.router.add_get('/debug', get_debug_info)
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
 
     parser = ArgumentParser()
     parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
+    parser.add_argument('--host', default='localhost', type=str, help='server host')
     args = parser.parse_args()
     port = args.port
-    node += ':' + str(port)
+    host = args.host
+    node = 'http://' + host + ':' + str(port)
+    
     #app.run(host='0.0.0.0', port=port)
-    web.run_app(app, port=port)
+    web.run_app(app, port=port, host=host)
