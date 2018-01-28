@@ -1,11 +1,145 @@
 <!doctype html>
 <html>
 <head>
-    <title>Quantum blockchain</title>
+<title>Quantum blockchain</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet" media="screen">
+<style>
+.form, .output-cnt {
+	margin-top: 1.5em;
+}
+input {
+	margin-bottom: 0.5em;
+}
+pre {
+	background-color: #ccc;
+}
+
+</style>
 </head>
 <body>
 
+<div class="container">
+	<div class="row">
+		<div class="col-md-5">
+			<form method="get" class="container form" action="/chain">
+				<h2>Get full chain</h2>
+	          	<button>Get</button>
+			</form>			
+
+			<form method="post" class="container form" action="/transactions/new">
+				<h2>Create transaction</h2>
+
+				<input name="sender" type="text" placeholder="From"><br>
+				<input name="recipient" type="text" placeholder="To"><br>
+				<input name="amount" type="number" placeholder="Amount"><br>
+
+	          	<button>Add transaction</button>
+			</form>
+
+			<form method="get" action="/mine" class="container form">
+				<h2>Mine block</h2>
+	          	<button>Mine</button>
+			</form>
+
+			<form method="get" class="container form" action="/nodes">
+				<h2>Show neighbour nodes</h2>
+	          	<button>Get</button>
+			</form>
+
+			<form method="get" class="container form" action="/nodes/resolve">
+				<h2>Resolve conflicts</h2>
+	          	<button>Resolve</button>
+			</form>
+
+			<form method="post" class="container form form--node-register" action="/nodes/register">
+				<h2>Update nodes</h2>
+				<input type="text" name="nodes" placeholder="Node1, node2, node3...">
+	          	<button>Resolve</button>
+			</form>
+
+			<form method="post" class="container form" action="/key/insert">
+				<h2>Sync with</h2>
+				<input name="node" type="text" placeholder="Node">
+	          	<button>Sync with node</button>
+			</form>
+
+			<form method="post" class="container form form--native-data" action="/key/update">
+				<h2>Set key</h2>
+				<input name="data" type="text" placeholder="Private key">
+	          	<button>Send key</button>
+			</form>
+
+		</div>
+		<div class="col-md-7 output-cnt">
+			<h2>Result:</h2>
+			<pre class="output"></pre>
+		</div>
+	</div>
+</div>
 
 
+
+<script src="http://code.jquery.com/jquery.js"></script>
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+<script>
+function prepareText(text) {
+	if (typeof text === 'object') {
+		text = JSON.stringify(text, null, 4);
+	}
+	return text.trim();
+}
+function output(text) {
+	$('.output').text(prepareText(text));
+}
+function  print(text) {
+	var prevText = $('.output').text();
+
+	$('.output').text(prevText + "\n" + prepareText(text));
+}
+
+jQuery(function ($) {
+	$('form').submit(function (event) {
+		event.preventDefault();
+
+		var $form 	= $(this);
+		var uri 	= $form.attr('action');
+		var method 	= $form.attr('method');
+		var data;
+
+		if (method.toUpperCase() == 'POST') {
+
+			data = $form.serializeArray().reduce((o, c) => {
+				o[c.name] = c.value;
+				return o;
+			}, {});
+
+			if ($form.hasClass('form--node-register')) {
+				data.nodes = data.nodes.split(',').map(s => s.trim());
+			}
+
+			if ($form.hasClass('form--native-data')) {
+				data = data.data;
+			}
+			else {
+				data = JSON.stringify(data);
+			}
+		}
+		else {
+			data = $form.serialize();
+		}
+
+
+		$.ajax({
+			url:  uri,
+			type: method,
+			data: data,
+			success: d => { output(d); },
+		});
+	});
+
+});
+
+</script>
 </body>
 </html>

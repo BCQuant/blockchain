@@ -417,12 +417,14 @@ async def show_form(request):
     with open('./view/index.html') as f:
         text = f.read()
     return web.Response(content_type='text/html', text=text)
+    
+app.router.add_get('/', show_form)
 
-app.router.add_get ('/mine', mine)
-app.router.add_post('/transactions/new', new_transaction)
 app.router.add_get ('/chain', full_chain)
-app.router.add_get ('/nodes', get_nodes)
+app.router.add_post('/transactions/new', new_transaction)
+app.router.add_get ('/mine', mine)
 
+app.router.add_get ('/nodes', get_nodes)
 app.router.add_post('/nodes/register', register_nodes)
 app.router.add_get ('/nodes/remove', remove_nodes)
 app.router.add_get ('/nodes/resolve', consensus)
@@ -431,7 +433,6 @@ app.router.add_post('/key/insert', key_insert)
 app.router.add_post('/key/update', key_update)
 
 app.router.add_get('/debug', get_debug_info)
-app.router.add_get('/', show_form)
 
 #app.router.add_static('/', './public/')
 
