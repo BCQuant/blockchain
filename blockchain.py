@@ -411,7 +411,12 @@ async def get_debug_info(request):
     qnt_hashes
 
     return web.json_response({'qnt_hashes':{ k:qnt_hashes[k].decode('ascii') for k in qnt_hashes.keys()}, 'nodes':nodes})
-    
+
+async def show_form(request):
+    text = ''
+    with open('./view/index.html') as f:
+        text = f.read()
+    return web.Response(content_type='text/html', text=text)
 
 app.router.add_get ('/mine', mine)
 app.router.add_post('/transactions/new', new_transaction)
@@ -426,6 +431,9 @@ app.router.add_post('/key/insert', key_insert)
 app.router.add_post('/key/update', key_update)
 
 app.router.add_get('/debug', get_debug_info)
+app.router.add_get('/', show_form)
+
+#app.router.add_static('/', './public/')
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
