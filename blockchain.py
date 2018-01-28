@@ -4,9 +4,37 @@ from time import time
 from urllib.parse import urlparse
 from uuid import uuid4
 
-import requests
-from flask import Flask, jsonify, request
+import os
 
+import requests
+#from flask import Flask, jsonify, request
+
+import asyncio
+from aiohttp import web
+
+node = 'http://localhost'
+
+qnt_hashes = {}
+nodes = {}
+
+def add_key(key, node=None):
+    hash = hashlib.sha256(key).hexdigest()
+    qnt_hashes[hash] = key
+    if node is not None:
+        nodes[node] = hash
+
+def get_hash(obj, key_hash=None,node=None):
+    if node is not None:
+        key_hash = nodes[node]
+    block_string = json.dumps(obj, sort_keys=True).encode()
+    hash = hashlib.sha256(block_string + qnt_hashes[key_hash]).hexdigest()
+    return hash
+
+
+def check_hash(obj, key_hash=None, result='', node=None):
+    if node is not None:
+        key_hash = nodes[node]
+    return get_hash(obj, key_hash) == result
 
 class Blockchain:
     def __init__(self):
@@ -81,14 +109,15 @@ class Blockchain:
         max_length = len(self.chain)
 
         # Grab and verify the chains from all the nodes in our network
-        for node in neighbours:
-            response = requests.get(f'http://{node}/chain')
+        for cur_node in neighbours:
+            response = requests.get(f'http://{cur_node}/chain?node={node}')
             if response.status_code == 200:
-                length = response.json()['length']
-                chain = response.json()['chain']
-
+                data = response.json()
+                length = data['length']
+                chain = data['chain']
+                
                 # Check if the length is longer and the chain is valid
-                if length > max_length and self.valid_chain(chain):
+                if length > max_length and check_hash(chain, result=data['hash'], node=cur_node) and self.valid_chain(chain):
                     max_length = length
                     new_chain = chain
 
@@ -189,21 +218,20 @@ class Blockchain:
 
         guess = f'{last_proof}{proof}{last_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
-        return guess_hash[:4] == "0000"
-
+        #return guess_hash[:4] == "0000"
+        return True
 
 # Instantiate the Node
-app = Flask(__name__)
-
+#app = Flask(__name__)
+app = web.Application()
 # Generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
 
 # Instantiate the Blockchain
 blockchain = Blockchain()
 
-
-@app.route('/mine', methods=['GET'])
-def mine():
+#@app.route('/mine', methods=['GET'])
+def mine(request):
     # We run the proof of work algorithm to get the next proof...
     last_block = blockchain.last_block
     proof = blockchain.proof_of_work(last_block)
@@ -227,60 +255,67 @@ def mine():
         'proof': block['proof'],
         'previous_hash': block['previous_hash'],
     }
-    return jsonify(response), 200
+    return web.json_response(response)
 
 
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    values = request.get_json()
+# @app.route('/transactions/new', methods=['POST'])
+async def new_transaction(request):
+    values = await request.json()
 
     # Check that the required fields are in the POST'ed data
     required = ['sender', 'recipient', 'amount']
+    
+    
     if not all(k in values for k in required):
-        return 'Missing values', 400
-
+        return web.json_response({'error':'Missing values'}, status=400)
+        
     # Create a new Transaction
     index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
 
     response = {'message': f'Transaction will be added to Block {index}'}
-    return jsonify(response), 201
+    return web.json_response(response, status=201)
 
 
-@app.route('/chain', methods=['GET'])
-def full_chain():
+#@app.route('/chain', methods=['GET'])
+def full_chain(request):
+    if 'uuid' in request.rel_url.query:
+        cur_node = request.rel_url.query.get('uuid')
     response = {
         'chain': blockchain.chain,
         'length': len(blockchain.chain),
+        'node': node,
     }
-    return jsonify(response), 200
+    if cur_node:
+        response['hash'] = get_hash(blockchain.chain, node=cur_node)
+    
+    return web.json_response(response)
 
 
-@app.route('/nodes', methods=['GET'])
-def nodes():
+#@app.route('/nodes', methods=['GET'])
+def nodes(request):
     response = {
         'message': 'Nodes',
         'total_nodes': list(blockchain.nodes),
     }
-    return jsonify(response), 200
+    return web.json_response(response)
 
-@app.route('/nodes/remove', methods=['GET'])
-def remove_nodes():
+#@app.route('/nodes/remove', methods=['GET'])
+def remove_nodes(request):
     blockchain.remove_nodes()
     response = {
         'message': 'Nodes removed',
         'total_nodes': list(blockchain.nodes),
     }
-    return jsonify(response), 201
+    return web.json_response(response, status=201)
 
-
-@app.route('/nodes/register', methods=['POST'])
-def register_nodes():
-    values = request.get_json()
+    
+#@app.route('/nodes/register', methods=['POST'])
+async def register_nodes(request):
+    values = await request.json()
 
     nodes = values.get('nodes')
     if nodes is None:
-        return "Error: Please supply a valid list of nodes", 400
-
+        return web.json_response({"error":"Error: Please supply a valid list of nodes"}, status=400)
     for node in nodes:
         blockchain.register_node(node)
 
@@ -288,11 +323,11 @@ def register_nodes():
         'message': 'New nodes have been added',
         'total_nodes': list(blockchain.nodes),
     }
-    return jsonify(response), 201
+    return web.json_response(response, status=201)
 
 
-@app.route('/nodes/resolve', methods=['GET'])
-def consensus():
+#@app.route('/nodes/resolve', methods=['GET'])
+def consensus(request):
     replaced = blockchain.resolve_conflicts()
 
     if replaced:
@@ -306,8 +341,49 @@ def consensus():
             'chain': blockchain.chain
         }
 
-    return jsonify(response), 200
+    return web.json_response(response)
 
+waiting_for_addition = False
+current_key = None
+async def key_insert(request):
+    data = await request.json()
+    if waiting_for_addition:
+        return web.json_response({}, status=200)
+    if 'node' not in data:
+        return web.json_response({}, status=400)
+    global current_key
+    current_key = asyncio.Future()
+    
+    if 'recipient' not in data:
+        aiohttp.post(data['node'] + '/key/insert', data={'node':node, 'recipient':True})
+        await asyncio.sleep(0.2)
+        os.system("KeyByCURL.out " + data['node'] + '/key/update' + ' ' + node + '/key/update')
+    
+    key = await current_key
+    
+    add_key(key, node=data['node'])
+    
+    return web.json_response({}, status=201)
+
+async def key_update(request):
+    global current_key
+    
+    key = await request.post()
+    key = key.strip()
+    current_key.set_result(key)
+    
+    return web.json_response({}, status=201)
+    
+app.router.add_post('/key/insert', key_insert)
+app.router.add_post('/key/update', key_update)
+
+app.router.add_get ('/mine', mine)
+app.router.add_get ('/nodes/remove', remove_nodes)
+app.router.add_post('/transactions/new', new_transaction)
+app.router.add_get ('/chain', full_chain)
+app.router.add_get ('/nodes', nodes)
+app.router.add_post('/nodes/register', register_nodes)
+app.router.add_get ('/nodes/resolve', consensus)
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
@@ -316,5 +392,6 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
     args = parser.parse_args()
     port = args.port
-
-    app.run(host='0.0.0.0', port=port)
+    node += ':' + str(port)
+    #app.run(host='0.0.0.0', port=port)
+    web.run_app(app, port=port)
